@@ -1,5 +1,6 @@
 name: 00 - 构建web镜像，推送和EC2 k3s部署
-
+apiVersion: apps/v1
+kind: Deployment
 on:
   push:
     branches:
