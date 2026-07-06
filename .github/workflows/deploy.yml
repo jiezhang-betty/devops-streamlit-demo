@@ -1,0 +1,94 @@
+name: Deploy to K3s
+run-name: "Build & Deploy: ${{ github.sha }}"
+
+# 触发条件：main分支推送，支持手动触发
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 全局环境变量（可根据需要修改）
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  DEPLOY_NAMESPACE: default
+  DEPLOY_NAME: my-python-app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Verify AWS permissions
+        run: aws sts get-caller-identity
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t ${{ env.DEPLOY_NAME }} .
+          docker tag ${{ env.DEPLOY_NAME }}:latest $REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          docker tag ${{ env.DEPLOY_NAME }}:latest $REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          docker push $REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          docker push $REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Prepare kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl config view
+
+      - name: Verify K3s cluster connection
+        run: |
+          kubectl get nodes --timeout=30s
+
+      - name: Refresh ECR pull secret（关键：避免镜像拉取失败）
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          AWS_PASSWORD=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+          kubectl create secret docker-registry ecr-registry-secret \
+            --docker-server=$REGISTRY \
+            --docker-username=AWS \
+            --docker-password=$AWS_PASSWORD \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update deployment image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          kubectl set image deployment/${{ env.DEPLOY_NAME }} \
+            ${{ env.DEPLOY_NAME }}=$REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
+            -n ${{ env.DEPLOY_NAMESPACE }}
+
+      - name: Wait for rollout to complete
+        run: |
+          if ! kubectl rollout status deployment/${{ env.DEPLOY_NAME }} -n ${{ env.DEPLOY_NAMESPACE }} --timeout=300s; then
+            echo "Deployment failed, rolling back..."
+            kubectl rollout undo deployment/${{ env.DEPLOY_NAME }} -n ${{ env.DEPLOY_NAMESPACE }}
+            exit 1
+          fi
+
+      - name: Verify deployment status
+        run: |
+          kubectl get deployment ${{ env.DEPLOY_NAME }} -n ${{ env.DEPLOY_NAMESPACE }}
+          kubectl get pods -l app=${{ env.DEPLOY_NAME }} -n ${{ env.DEPLOY_NAMESPACE }}
