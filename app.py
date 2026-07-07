@@ -17,7 +17,7 @@ def get_holmes_agent():
     return ai
 ai_agent = get_holmes_agent()
 # ==============================
-# 不同功能的提示词（你要的多方法）
+# 不同功能的提示词
 # ==============================
 PROMPTS = {
     "自然语言转 PromQL": """
