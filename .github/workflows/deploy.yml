@@ -68,7 +68,7 @@ jobs:
           mkdir -p ~/.kube
           echo "Current EC2 IP: ${{ vars.EC2_HOST_IP }}"
           echo "${{ secrets.KUBE_CONFIG }}" | sed "s/__EC2_HOST_IP__/${{ vars.EC2_HOST_IP }}/g" > ~/.kube/config
-          chmod 644 ~/.kube/config
+          chmod 600 ~/.kube/config
           
       # 7. kubectl执行部署
       - name: "Step 7: Deploy to EC2 K3s"
