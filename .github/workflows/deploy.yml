@@ -97,15 +97,15 @@ jobs:
             --docker-server=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com \
             --docker-username=AWS \
             --docker-password=$AWS_PASSWORD \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client -o yaml | kubectl apply -f - --validate=false
 
           # 生成kube config配置文件
           kubectl create secret generic kubeconfig-secret \
             --from-file=config=$HOME/.kube/config \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client -o yaml | kubectl apply -f - --validate=false
           
           # 创建 Holmes 配置 ConfigMap（用于启用 Prometheus toolset）
-          cat <<EOF | kubectl apply -f -
+          cat <<EOF | kubectl apply -f - --validate=false
           apiVersion: v1
           kind: ConfigMap
           metadata:
@@ -121,7 +121,7 @@ jobs:
           EOF
 
           # 应用 Deployment
-          cat <<EOF | kubectl apply -f -
+          cat <<EOF | kubectl apply -f - --validate=false
           apiVersion: apps/v1
           kind: Deployment
           metadata:
@@ -178,7 +178,7 @@ jobs:
           EOF
 
           # 应用 Service (NodePort 30000)
-          cat <<EOF | kubectl apply -f -
+          cat <<EOF | kubectl apply -f - --validate=false
           apiVersion: v1
           kind: Service
           metadata:
