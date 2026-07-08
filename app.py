@@ -5,7 +5,7 @@ import streamlit as st
 # 应用配置（方便修改）
 # ==============================
 APP_TITLE = "🤖 HolmesGPT 智能诊断助手"
-APP_VERSION = "poc2-HolmesGPT AIOps, 8 Jul 2026, 20:15AM"
+APP_VERSION = "poc2-HolmesGPT AIOps, 8 Jul 2026, 20:22AM"
 
 # 关键：解决 kubectl 内存限制
 os.environ["TOOL_MEMORY_LIMIT_MB"] = "2048"
