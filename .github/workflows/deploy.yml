@@ -23,6 +23,9 @@ env:
   # 统一定义 Prometheus URL（仅需在此处修改），k3s上已经部署了Prometheus stack，
   # 它的集群内部service地址相对而言比较固定，集群内部容器可以直接使用这个service 地址
   PROMETHEUS_URL: http://prometheus-stack-kube-prom-prometheus:9090
+  # --- 关键新增：全局禁用 TLS 证书校验 ---
+  KUBECONFIG: ./kubeconfig.yaml
+  KUBECTL_INSECURE_SKIP_TLS_VERIFY: "true"
 
 jobs:
   build-and-deploy:
