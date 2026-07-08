@@ -69,6 +69,12 @@ jobs:
           echo "Current EC2 IP: ${{ vars.EC2_HOST_IP }}"
           echo "${{ secrets.KUBE_CONFIG }}" | sed "s/__EC2_HOST_IP__/${{ vars.EC2_HOST_IP }}/g" > ~/.kube/config
           chmod 600 ~/.kube/config
+
+      - name: "Setup K3s CA certificate"
+        run: |
+          echo "${{ secrets.K3S_CA_CRT }}" > k3s-ca.crt
+          # 配置 kubectl 使用该 CA 证书
+          kubectl config set-cluster k3s --certificate-authority=./k3s-ca.crt
           
       # 7. kubectl执行部署
       - name: "Step 7: Deploy to EC2 K3s"
