@@ -65,7 +65,7 @@ jobs:
             --docker-server=${REGISTRY} \
             --docker-username=AWS \
             --docker-password=${AWS_PWD} \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client -o yaml | kubectl apply -f - --validate=false
 
       - name: Update deployment image
         env:
