@@ -1,11 +1,10 @@
 import os
 import streamlit as st
-
 # ==============================
 # 应用配置（方便修改）
 # ==============================
 APP_TITLE = "🤖 HolmesGPT 智能诊断助手"
-APP_VERSION = "poc2-HolmesGPT AIOps, 9 Jul 2026, 20:22AM"
+APP_VERSION = "poc2-HolmesGPT AIOps, 9 Jul 2026, 20:31AM"
 
 # 关键：解决 kubectl 内存限制
 os.environ["TOOL_MEMORY_LIMIT_MB"] = "2048"
@@ -54,10 +53,10 @@ PROMPTS = {
 st.set_page_config(page_title="HolmesGPT AIOps", layout="wide")
 st.title("🤖 HolmesGPT K8s 智能诊断助手")
 st.divider()
-# 功能选择
+# 功能选择：自动读取字典key，避免文字不匹配
 task_type = st.selectbox(
     "请选择诊断功能",
-    ["自然语言转 PromQL", "K8s 异常 Pod 根因分析", "查询 Prometheus 指标", "集群整体健康检查"]
+    list(PROMPTS.keys())
 )
 # 输入框
 user_input = st.text_input("输入你的问题", placeholder="例如：查看最近5分钟CPU使用率")
@@ -76,8 +75,14 @@ if st.button("开始分析") and user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
-    # 构造提示词
-    prompt = PROMPTS[task_type].format(query=user_input) if "{query}" in PROMPTS[task_type] else PROMPTS[task_type]
+    
+    # 【修复段】安全读取模板，彻底解决KeyError
+    template = PROMPTS.get(task_type.strip(), "请描述你的K8s集群问题，我将为你诊断")
+    if "{query}" in template:
+        prompt = template.format(query=user_input)
+    else:
+        prompt = template
+
     # AI 回复
     with st.chat_message("assistant"):
         with st.spinner("🔍 正在诊断中..."):
