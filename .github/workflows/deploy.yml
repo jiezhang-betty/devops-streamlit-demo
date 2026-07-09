@@ -1,4 +1,4 @@
-name: Build & Deploy App to K3s on July 9th
+name: Build & Deploy App to K3s on July
 on:
   push:
     branches: [ main ]
