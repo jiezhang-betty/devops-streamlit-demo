@@ -34,14 +34,16 @@ jobs:
       - name: Build & Push Docker Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          APP_NAME: ${{ env.APP_NAME }}
+          ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_SHA: ${{ github.sha }}
         run: |
           # 分层构建缓存优化，先拷贝依赖
-          docker build -t ${env.APP_NAME}:${IMAGE_SHA} .
-          docker tag ${env.APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${env.ECR_REPO}:${IMAGE_SHA}
-          docker tag ${env.APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${env.ECR_REPO}:latest
-          docker push ${REGISTRY}/${env.ECR_REPO}:${IMAGE_SHA}
-          docker push ${REGISTRY}/${env.ECR_REPO}:latest
+          docker build -t ${APP_NAME}:${IMAGE_SHA} .
+          docker tag ${APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
+          docker tag ${APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${ECR_REPO}:latest
+          docker push ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
+          docker push ${REGISTRY}/${ECR_REPO}:latest
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
