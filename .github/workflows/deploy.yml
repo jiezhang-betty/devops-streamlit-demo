@@ -1,133 +1,215 @@
-name: Build & Deploy App to K3s on July
+name: 00 - 构建web镜像，推送和EC2 k3s部署
+
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
+    inputs:
+      deploy_only:
+        description: '仅重新部署（跳过镜像构建和推送，适用于EC2 IP变更后重新部署）'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 env:
-  ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
-  APP_NAME: devops-poc2
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  APP_PORT: 8000
-  NODE_PORT: 30000
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  IMAGE_TAG: ${{ github.sha }}
+  # 统一定义 Prometheus URL（仅需在此处修改），k3s上已经部署了Prometheus stack，
+  # 它的集群内部service地址相对而言比较固定，集群内部容器可以直接使用这个service 地址
+  PROMETHEUS_URL: http://prometheus-stack-kube-prom-prometheus:9090
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      KUBECTL_INSECURE_SKIP_TLS_VERIFY: "true"
+    
     steps:
-      - name: Checkout source code
+      # 1. 检出代码
+      - name: "Step 1: Checkout code"
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      # 2. 配置 AWS 凭证
+      - name: "Step 2: Configure AWS credentials"
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Login Amazon ECR
+      # 3. 登录 ECR（仅完整构建时执行）
+      - name: "Step 3: Login to Amazon ECR"
+        if: ${{ github.event.inputs.deploy_only != 'true' }}
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Docker Image (with cache)
+      # 4. 构建 Docker 镜像并推送到 ECR（仅完整构建时执行）
+      - name: "Step 4: Build and push Docker image"
+        if: ${{ github.event.inputs.deploy_only != 'true' }}
         env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          APP_NAME: ${{ env.APP_NAME }}
-          ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
-          IMAGE_SHA: ${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          docker build -t ${APP_NAME}:${IMAGE_SHA} .
-          docker tag ${APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
-          docker tag ${APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${ECR_REPO}:latest
-          docker push ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
-          docker push ${REGISTRY}/${ECR_REPO}:latest
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Install kubectl
+      # 5. 安装 kubectl
+      - name: "Step 5: Install kubectl"
         uses: azure/setup-kubectl@v4
 
-      - name: Generate kubeconfig (fix permission)
+      # 6. 写入 kubeconfig（用 EC2_HOST_IP variable 替换 KUBE_CONFIG 中的占位符 __EC2_HOST_IP__）
+      - name: "Step 6: Write kubeconfig"
         run: |
           mkdir -p ~/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
-          chmod 600 ~/.kube/config
-
-      - name: Create ECR pull secret (upsert避免缺失)
+          echo "Current EC2 IP: ${{ vars.EC2_HOST_IP }}"
+          echo "${{ secrets.KUBE_CONFIG }}" | sed "s/__EC2_HOST_IP__/${{ vars.EC2_HOST_IP }}/g" > ~/.kube/config
+          chmod 644 ~/.kube/config
+          
+      # 7. kubectl执行部署
+      - name: "Step 7: Deploy to EC2 K3s"
         env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
+          # 仅重新部署时使用 latest 镜像，完整构建时使用 commit sha
+          DEPLOY_IMAGE_TAG: ${{ github.event.inputs.deploy_only == 'true' && 'latest' || github.sha }}
         run: |
-          AWS_PWD=$(aws ecr get-login-password --region ${AWS_REGION})
+          # 定义变量（根据是否仅部署选择镜像tag）
+          ECR_IMAGE="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${DEPLOY_IMAGE_TAG}"
+          echo "Deploy mode: deploy_only=${{ github.event.inputs.deploy_only }}"
+          echo "Using image: ${ECR_IMAGE}"
+          echo "Current EC2 Public IP: ${{ vars.EC2_HOST_IP }}"
+
+          # 创建 ECR registry secret
+          # NOTE: 先前用的是先删除再创建的逻辑，但是中间存在一个时间窗口（可能仅几十毫秒）内该 secret 不存在。
+          # 此时如果 kubectl apply -f deployment 恰好执行，或者已有的 Pod 重启，会因为找不到 imagePullSecrets 而拉取镜像失败。
+          # 建议：使用 kubectl create secret --dry-run=client -o yaml | kubectl apply -f - 实现 upsert，一次到位，避免删除操作
+          AWS_PASSWORD=$(aws ecr get-login-password --region ${{ secrets.AWS_REGION }})
           kubectl create secret docker-registry ecr-registry-secret \
-            --docker-server=${REGISTRY} \
+            --docker-server=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com \
             --docker-username=AWS \
-            --docker-password=${AWS_PWD} \
-            --dry-run=client -o yaml | kubectl apply -f - --validate=false
+            --docker-password=$AWS_PASSWORD \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy / Update Application
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          APP_NAME: ${{ env.APP_NAME }}
-          ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
-          IMAGE_SHA: ${{ github.sha }}
-          APP_PORT: ${{ env.APP_PORT }}
-          NODE_PORT: ${{ env.NODE_PORT }}
-        run: |
-          cat <<EOF | kubectl apply -f - --validate=false
+          # 生成kube config配置文件
+          kubectl create secret generic kubeconfig-secret \
+            --from-file=config=$HOME/.kube/config \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # 创建 Holmes 配置 ConfigMap（用于启用 Prometheus toolset）
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: holmes-config
+          data:
+            config.yaml: |
+              toolsets:
+                prometheus/metrics:
+                  enabled: true
+                  subtype: prometheus
+                  config:
+                    prometheus_url: "${PROMETHEUS_URL}"
+          EOF
+
+          # 应用 Deployment
+          cat <<EOF | kubectl apply -f -
           apiVersion: apps/v1
           kind: Deployment
           metadata:
-            name: ${APP_NAME}
+            name: poc7-app
             labels:
-              app: ${APP_NAME}
+              app: poc7-app
           spec:
             replicas: 1
             selector:
               matchLabels:
-                app: ${APP_NAME}
+                app: poc7-app
             template:
               metadata:
                 labels:
-                  app: ${APP_NAME}
+                  app: poc7-app
               spec:
                 imagePullSecrets:
                   - name: ecr-registry-secret
                 containers:
-                  - name: ${APP_NAME}
-                    image: ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
+                  - name: poc7-app
+                    image: ${ECR_IMAGE}
                     ports:
-                      - containerPort: ${APP_PORT}
-          ---
+                      - containerPort: 8000
+                    env:
+                      - name: HOLMES_DEEPSEEK_API_KEY
+                        value: "${{ secrets.HOLMES_DEEPSEEK_API_KEY }}"
+                      - name: HOLMES_MODEL
+                        value: "${{ secrets.HOLMES_MODEL }}"
+                      - name: PROMETHEUS_URL
+                        value: "${PROMETHEUS_URL}"
+                    volumeMounts:
+                      - name: kubeconfig
+                        mountPath: /root/.kube
+                        readOnly: true
+                      - name: holmes-config
+                        mountPath: /root/.holmes/config.yaml
+                        subPath: config.yaml
+                        readOnly: true
+                    resources:
+                      limits:
+                        memory: "1Gi"
+                        cpu: "500m"
+                      requests:
+                        memory: "256Mi"
+                        cpu: "250m"
+                volumes:
+                  - name: kubeconfig
+                    secret:
+                      secretName: kubeconfig-secret
+                      defaultMode: 0644
+                  - name: holmes-config
+                    configMap:
+                      name: holmes-config
+          EOF
+
+          # 应用 Service (NodePort 30000)
+          cat <<EOF | kubectl apply -f -
           apiVersion: v1
           kind: Service
           metadata:
-            name: ${APP_NAME}-service
+            name: poc7-app-service
           spec:
             type: NodePort
             selector:
-              app: ${APP_NAME}
+              app: poc7-app
             ports:
               - protocol: TCP
-                port: ${APP_PORT}
-                targetPort: ${APP_PORT}
-                nodePort: ${NODE_PORT}
+                port: 8000
+                targetPort: 8000
+                nodePort: 30000
           EOF
 
-      - name: Wait rollout complete with fallback
-        env:
-          APP_NAME: ${{ env.APP_NAME }}
-        run: |
-          if kubectl rollout status deployment/${APP_NAME} --timeout=150s; then
-            echo "滚动更新成功"
-          else
-            echo "警告：滚动更新检测超时/证书异常，不阻断流水线"
+          # 仅重新部署模式下，强制重启 Pod 以加载新的 kubeconfig
+          if [ "${{ github.event.inputs.deploy_only }}" == "true" ]; then
+            echo "=== Deploy-only mode: 重启 Pod 以应用新配置 ==="
+            kubectl rollout restart deployment/poc7-app
           fi
 
-      - name: Verify pod status
-        env:
-          APP_NAME: ${{ env.APP_NAME }}
+          # 等待部署完成
+          kubectl rollout status deployment/poc7-app --timeout=150s
+
+          # 验证部署状态
+          echo "=== Pod Status ==="
+          kubectl get pods -l app=poc7-app
+          echo "=== Service Status ==="
+          kubectl get svc poc7-app-service
+          echo "=== Deployment Status ==="
+          kubectl get deployment poc7-app
+
+      # 8. 显示部署后信息
+      # EC2_HOST_IP 使用 vars（非 secret），不会被遮盖
+      - name: "Step Final: 显示部署完毕之后重要信息"
         run: |
-          kubectl get pods -l app=${APP_NAME}
-          kubectl get deployment ${APP_NAME}
-          kubectl get service ${APP_NAME}-service
+          echo "===== Current EC2 Public IP ====="
+          echo "1. Current EC2 public IP: ${{ vars.EC2_HOST_IP }}"
+          echo "2. HolmesGPT 智能助手    : http://${{ vars.EC2_HOST_IP }}:30000/"
+          echo "3. Prometheus URL       : http://${{ vars.EC2_HOST_IP }}:30090/"
