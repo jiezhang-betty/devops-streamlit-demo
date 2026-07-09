@@ -2,18 +2,18 @@ name: Build & Deploy App to K3s
 on:
   push:
     branches: [ main ]
-  # 支持手动触发流水线
   workflow_dispatch:
 
 env:
   ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
-  APP_NAME: my-poc2
+  APP_NAME: poc7-app
   AWS_REGION: ${{ secrets.AWS_REGION }}
+  APP_PORT: 8000
+  NODE_PORT: 30000
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # 全局跳过k8s证书校验，解决你K3s自签x509报错
     env:
       KUBECTL_INSECURE_SKIP_TLS_VERIFY: "true"
     steps:
@@ -31,14 +31,13 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Docker Image
+      - name: Build & Push Docker Image (with cache)
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           APP_NAME: ${{ env.APP_NAME }}
           ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_SHA: ${{ github.sha }}
         run: |
-          # 分层构建缓存优化，先拷贝依赖
           docker build -t ${APP_NAME}:${IMAGE_SHA} .
           docker tag ${APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
           docker tag ${APP_NAME}:${IMAGE_SHA} ${REGISTRY}/${ECR_REPO}:latest
@@ -52,7 +51,6 @@ jobs:
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
-          # 修复权限，kubectl标准要求
           chmod 600 ~/.kube/config
 
       - name: Create ECR pull secret (upsert避免缺失)
@@ -67,14 +65,15 @@ jobs:
             --docker-password=${AWS_PWD} \
             --dry-run=client -o yaml | kubectl apply -f - --validate=false
 
-      - name: Update deployment image
+      - name: Deploy / Update Application
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           APP_NAME: ${{ env.APP_NAME }}
           ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_SHA: ${{ github.sha }}
+          APP_PORT: ${{ env.APP_PORT }}
+          NODE_PORT: ${{ env.NODE_PORT }}
         run: |
-          # 先尝试更新镜像，不存在则直接创建
           cat <<EOF | kubectl apply -f - --validate=false
           apiVersion: apps/v1
           kind: Deployment
@@ -98,18 +97,37 @@ jobs:
                   - name: ${APP_NAME}
                     image: ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
                     ports:
-                      - containerPort: 8000
+                      - containerPort: ${APP_PORT}
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: ${APP_NAME}-service
+          spec:
+            type: NodePort
+            selector:
+              app: ${APP_NAME}
+            ports:
+              - protocol: TCP
+                port: ${APP_PORT}
+                targetPort: ${APP_PORT}
+                nodePort: ${NODE_PORT}
           EOF
 
       - name: Wait rollout complete with fallback
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
         run: |
-          if kubectl rollout status deployment/${env.APP_NAME} --timeout=150s; then
+          if kubectl rollout status deployment/${APP_NAME} --timeout=150s; then
             echo "滚动更新成功"
           else
             echo "警告：滚动更新检测超时/证书异常，不阻断流水线"
           fi
 
       - name: Verify pod status
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
         run: |
-          kubectl get pods -l app=${env.APP_NAME}
-          kubectl get deployment ${env.APP_NAME}
+          kubectl get pods -l app=${APP_NAME}
+          kubectl get deployment ${APP_NAME}
+          kubectl get service ${APP_NAME}-service
