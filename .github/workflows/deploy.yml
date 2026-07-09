@@ -58,13 +58,14 @@ jobs:
       - name: Create ECR pull secret (upsert避免缺失)
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
-          AWS_PWD=$(aws ecr get-login-password --region ${env.AWS_REGION})
+          AWS_PWD=$(aws ecr get-login-password --region ${AWS_REGION})
           kubectl create secret docker-registry ecr-registry-secret \
             --docker-server=${REGISTRY} \
             --docker-username=AWS \
             --docker-password=${AWS_PWD} \
-            --dry-run=client -o yaml | kubectl apply -f - --validate=false
+            --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Update deployment image
         env:
