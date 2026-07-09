@@ -70,14 +70,36 @@ jobs:
       - name: Update deployment image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          APP_NAME: ${{ env.APP_NAME }}
+          ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_SHA: ${{ github.sha }}
         run: |
-          # 先尝试更新镜像，不存在则打印提示
-          if kubectl get deployment ${env.APP_NAME}; then
-            kubectl set image deployment/${env.APP_NAME} ${env.APP_NAME}=${REGISTRY}/${env.ECR_REPO}:${IMAGE_SHA}
-          else
-            echo "Deployment不存在，请先创建deployment资源"
-          fi
+          # 先尝试更新镜像，不存在则直接创建
+          cat <<EOF | kubectl apply -f - --validate=false
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ${APP_NAME}
+            labels:
+              app: ${APP_NAME}
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: ${APP_NAME}
+            template:
+              metadata:
+                labels:
+                  app: ${APP_NAME}
+              spec:
+                imagePullSecrets:
+                  - name: ecr-registry-secret
+                containers:
+                  - name: ${APP_NAME}
+                    image: ${REGISTRY}/${ECR_REPO}:${IMAGE_SHA}
+                    ports:
+                      - containerPort: 8000
+          EOF
 
       - name: Wait rollout complete with fallback
         run: |
