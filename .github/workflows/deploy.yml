@@ -6,7 +6,7 @@ on:
 
 env:
   ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
-  APP_NAME: poc7-app
+  APP_NAME: devops-poc2
   AWS_REGION: ${{ secrets.AWS_REGION }}
   APP_PORT: 8000
   NODE_PORT: 30000
