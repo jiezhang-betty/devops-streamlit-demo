@@ -1,4 +1,4 @@
-name: 00 - 构建web镜像，推送和EC2 k3s部署
+name: "Deploy HolmesGPT to EC2 K3s"
 
 on:
   push:
@@ -119,23 +119,23 @@ jobs:
           apiVersion: apps/v1
           kind: Deployment
           metadata:
-            name: poc7-app
+            name: devops-poc2
             labels:
-              app: poc7-app
+              app: devops-poc2
           spec:
             replicas: 1
             selector:
               matchLabels:
-                app: poc7-app
+                app: devops-poc2
             template:
               metadata:
                 labels:
-                  app: poc7-app
+                  app: devops-poc2
               spec:
                 imagePullSecrets:
                   - name: ecr-registry-secret
                 containers:
-                  - name: poc7-app
+                  - name: devops-poc2
                     image: ${ECR_IMAGE}
                     ports:
                       - containerPort: 8000
@@ -176,11 +176,11 @@ jobs:
           apiVersion: v1
           kind: Service
           metadata:
-            name: poc7-app-service
+            name: devops-poc2-service
           spec:
             type: NodePort
             selector:
-              app: poc7-app
+              app: devops-poc2
             ports:
               - protocol: TCP
                 port: 8000
@@ -191,19 +191,19 @@ jobs:
           # 仅重新部署模式下，强制重启 Pod 以加载新的 kubeconfig
           if [ "${{ github.event.inputs.deploy_only }}" == "true" ]; then
             echo "=== Deploy-only mode: 重启 Pod 以应用新配置 ==="
-            kubectl rollout restart deployment/poc7-app
+            kubectl rollout restart deployment/devops-poc2
           fi
 
           # 等待部署完成
-          kubectl rollout status deployment/poc7-app --timeout=150s
+          kubectl rollout status deployment/devops-poc2 --timeout=150s
 
           # 验证部署状态
           echo "=== Pod Status ==="
-          kubectl get pods -l app=poc7-app
+          kubectl get pods -l app=devops-poc2
           echo "=== Service Status ==="
-          kubectl get svc poc7-app-service
+          kubectl get svc devops-poc2-service
           echo "=== Deployment Status ==="
-          kubectl get deployment poc7-app
+          kubectl get deployment devops-poc2
 
       # 8. 显示部署后信息
       # EC2_HOST_IP 使用 vars（非 secret），不会被遮盖

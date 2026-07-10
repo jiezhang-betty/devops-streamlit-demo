@@ -51,7 +51,7 @@ PROMPTS = {
 # Streamlit 页面布局
 # ==============================
 st.set_page_config(page_title="HolmesGPT AIOps", layout="wide")
-st.title("🤖 HolmesGPT K8s 智能诊断助手")
+st.title("🤖 HolmesGPT K3s 智能诊断助手")
 st.divider()
 # 功能选择：自动读取字典key，避免文字不匹配
 task_type = st.selectbox(
